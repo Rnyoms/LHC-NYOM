@@ -11,15 +11,25 @@ from openpyxl import Workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
 import datetime
 
-# ------------------ SISTEM LOGIN ------------------
+# ------------------ SISTEM LOGIN DENGAN TOMBOL ------------------
 AUTHORIZED_USERS = {"pbph": "pbph123"}
 
 st.sidebar.title("🔐 Login")
-username = st.sidebar.text_input("Username")
-password = st.sidebar.text_input("Password", type="password")
+with st.sidebar.form("login_form"):
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
+    login_btn = st.form_submit_button("Login")
 
-if username not in AUTHORIZED_USERS or password != AUTHORIZED_USERS[username]:
-    st.sidebar.error("Login gagal. Coba lagi.")
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+
+if login_btn:
+    if username in AUTHORIZED_USERS and password == AUTHORIZED_USERS[username]:
+        st.session_state.logged_in = True
+    else:
+        st.sidebar.error("Login gagal. Coba lagi.")
+
+if not st.session_state.logged_in:
     st.stop()
 
 # ------------------ BATAS WAKTU ------------------
@@ -28,12 +38,10 @@ if datetime.datetime.now() > batas_tanggal:
     st.error("⚠️ Akses aplikasi ini telah ditutup sejak 16 Juli 2025.")
     st.stop()
 
-# ------------------ APLIKASI STREAMLIT ------------------
+# ------------------ APLIKASI ------------------
 
-# --- Daftar jenis pohon (bisa diperluas) ---
 JENIS_POHON = ["Merbau", "Kelompok Meranti", "Rimba Campuran", "Kayu Indah"]
 
-# --- Rata-rata volume per kelas diameter ---
 RATA2_VOLUME = {
     "40-49": 1.12,
     "50-59": 2.34,
@@ -41,7 +49,6 @@ RATA2_VOLUME = {
     "100UP": 10.0
 }
 
-# --- Input UI per kelas diameter ---
 def input_kelas_diameter(kelas_nama):
     st.subheader(f"Kelas Diameter {kelas_nama}")
     col1, col2 = st.columns(2)
@@ -75,7 +82,6 @@ def input_kelas_diameter(kelas_nama):
         "persen_jenis": jenis_dict
     }
 
-# --- Pemilihan jenis pohon berdasarkan persen ---
 def pilih_jenis(persen_jenis):
     eksplisit = {j: p for j, p in persen_jenis.items() if p > 0}
     kosong = [j for j, p in persen_jenis.items() if p == 0]
@@ -89,7 +95,6 @@ def pilih_jenis(persen_jenis):
     probs = [final[j]/total for j in final]
     return list(final.keys()), probs
 
-# --- Buat titik acak di dalam polygon ---
 def random_point_in_polygon(polygon):
     minx, miny, maxx, maxy = polygon.bounds
     while True:
@@ -99,7 +104,6 @@ def random_point_in_polygon(polygon):
         if polygon.contains(p):
             return p
 
-# --- Simulasi pohon per kelas diameter ---
 def simulasi_kelas(data_kelas, polygon):
     hasil = []
     jenis_list, probs = pilih_jenis(data_kelas["persen_jenis"])
@@ -134,7 +138,6 @@ def simulasi_kelas(data_kelas, polygon):
 
     return hasil
 
-# --- Ekspor hasil ke Excel ---
 def export_to_excel(nama_petak, data_pohon):
     df = pd.DataFrame(data_pohon)
     rekap = df.groupby(["Jenis", "Kelas"]).agg(
@@ -156,7 +159,6 @@ def export_to_excel(nama_petak, data_pohon):
     wb.save(filename)
     return filename
 
-# --------------------- UI APLIKASI ---------------------
 st.title("Simulasi LHC Bayangan - Dengan Koordinat di Dalam Petak")
 
 uploaded_zip = st.file_uploader("Upload Shapefile Petak (.zip)", type=["zip"])
@@ -173,7 +175,6 @@ if uploaded_zip:
             polygon = gdf.geometry.iloc[0]
             st.success("Shapefile petak berhasil dimuat.")
 
-# Input nama petak dan semua kelas diameter
 nama_petak = st.text_input("Nama Petak", "Petak-1")
 kelas_40_49 = input_kelas_diameter("40-49")
 kelas_50_59 = input_kelas_diameter("50-59")
