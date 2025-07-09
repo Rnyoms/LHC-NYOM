@@ -9,6 +9,26 @@ import os
 import tempfile
 from openpyxl import Workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
+import datetime
+
+# ------------------ SISTEM LOGIN ------------------
+AUTHORIZED_USERS = {"pbph": "pbph123"}
+
+st.sidebar.title("🔐 Login")
+username = st.sidebar.text_input("Username")
+password = st.sidebar.text_input("Password", type="password")
+
+if username not in AUTHORIZED_USERS or password != AUTHORIZED_USERS[username]:
+    st.sidebar.error("Login gagal. Coba lagi.")
+    st.stop()
+
+# ------------------ BATAS WAKTU ------------------
+batas_tanggal = datetime.datetime(2025, 7, 16)
+if datetime.datetime.now() > batas_tanggal:
+    st.error("⚠️ Akses aplikasi ini telah ditutup sejak 16 Juli 2025.")
+    st.stop()
+
+# ------------------ APLIKASI STREAMLIT ------------------
 
 # --- Daftar jenis pohon (bisa diperluas) ---
 JENIS_POHON = ["Merbau", "Kelompok Meranti", "Rimba Campuran", "Kayu Indah"]
@@ -136,7 +156,7 @@ def export_to_excel(nama_petak, data_pohon):
     wb.save(filename)
     return filename
 
-# --------------------- APLIKASI STREAMLIT ---------------------
+# --------------------- UI APLIKASI ---------------------
 st.title("Simulasi LHC Bayangan - Dengan Koordinat di Dalam Petak")
 
 uploaded_zip = st.file_uploader("Upload Shapefile Petak (.zip)", type=["zip"])
