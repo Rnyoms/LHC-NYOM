@@ -11,7 +11,7 @@ from openpyxl import Workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
 import datetime
 
-# ------------------ SISTEM LOGIN DENGAN TOMBOL ------------------
+# ------------------ SISTEM LOGIN ------------------
 AUTHORIZED_USERS = {"pbph": "pbph123"}
 
 st.sidebar.title("🔐 Login")
@@ -40,24 +40,27 @@ if datetime.datetime.now() > batas_tanggal:
 
 # ------------------ KONSTANTA ------------------
 JENIS_POHON = ["Merbau", "Kelompok Meranti", "Rimba Campuran", "Kayu Indah"]
-RATA2_VOLUME = {"40-49": 1.12, "50-59": 2.34, "60-90": 6.5, "100UP": 10.0}
+KETENTUAN_BAKU = {
+    "20-39": {"d_min": 20, "d_max": 39, "h_min": 9, "h_max": 12, "rata2_volume": 0.45},
+    "40-49": {"d_min": 40, "d_max": 49, "h_min": 11, "h_max": 15, "rata2_volume": 1.38},
+    "50-59": {"d_min": 50, "d_max": 59, "h_min": 12, "h_max": 17, "rata2_volume": 2.05},
+    "60-99": {"d_min": 60, "d_max": 99, "h_min": 13, "h_max": 19, "rata2_volume": 3.00},
+    "100UP": {"d_min": 100, "d_max": 200, "h_min": 17, "h_max": 23, "rata2_volume": 9.65}
+}
 
-# ------------------ FUNGSI INPUT ------------------
+# ------------------ FORM INPUT ------------------
 def input_kelas_diameter(kelas_nama):
     st.subheader(f"Kelas Diameter {kelas_nama}")
+    data_baku = KETENTUAN_BAKU[kelas_nama]
+
     col1, col2 = st.columns(2)
     with col1:
-        d_min = st.number_input(f"{kelas_nama} - Diameter Min (cm)", min_value=10, value=40, step=1, format="%d")
-        h_min = st.number_input(f"{kelas_nama} - Tinggi Min (m)", min_value=5, value=10, step=1, format="%d")
         target_volume = st.number_input(f"{kelas_nama} - Target Volume (m³)", min_value=0.0, value=5.0, step=0.1, format="%.1f")
     with col2:
-        d_max = st.number_input(f"{kelas_nama} - Diameter Max (cm)", min_value=10, value=49, step=1, format="%d")
-        h_max = st.number_input(f"{kelas_nama} - Tinggi Max (m)", min_value=5, value=30, step=1, format="%d")
         toleransi = st.number_input(f"{kelas_nama} - Toleransi Volume (m³)", min_value=0.0, value=0.1, step=0.01, format="%.2f")
 
-    rata2 = RATA2_VOLUME[kelas_nama]
-    estimasi_jumlah = int(target_volume // rata2)
-    st.info(f"Perkiraan jumlah pohon: {estimasi_jumlah} pohon (rata-rata {rata2} m³)")
+    estimasi_jumlah = int(target_volume // data_baku["rata2_volume"])
+    st.info(f"Perkiraan jumlah pohon: {estimasi_jumlah} pohon (rata-rata {data_baku['rata2_volume']} m³)")
 
     st.markdown(f"**Persentase Jenis Pohon - {kelas_nama}**")
     jenis_dict = {}
@@ -66,30 +69,27 @@ def input_kelas_diameter(kelas_nama):
         jenis_dict[jenis] = persen
 
     return {
-        "kelas": kelas_nama, "d_min": d_min, "d_max": d_max,
-        "h_min": h_min, "h_max": h_max,
-        "target_volume": target_volume, "toleransi": toleransi,
+        "kelas": kelas_nama,
+        "d_min": data_baku["d_min"], "d_max": data_baku["d_max"],
+        "h_min": data_baku["h_min"], "h_max": data_baku["h_max"],
+        "target_volume": target_volume,
+        "toleransi": toleransi,
         "persen_jenis": jenis_dict
     }
 
 def pilih_jenis(persen_jenis):
-    eksplisit = {j: p for j, p in persen_jenis.items() if p > 0}
-    kosong = [j for j, p in persen_jenis.items() if p == 0]
-    sisa = max(0, 100 - sum(eksplisit.values()))
-    rata = sisa / len(kosong) if kosong else 0
-    final = eksplisit.copy()
-    for j in kosong:
-        final[j] = rata
+    final = {j: p for j, p in persen_jenis.items() if p > 0}
     total = sum(final.values())
-    probs = [final[j] / total for j in final]
+    if total == 0:
+        final = {j: 25 for j in JENIS_POHON}
+        total = 100
+    probs = [v / total for v in final.values()]
     return list(final.keys()), probs
 
 def random_point_in_polygon(polygon):
     minx, miny, maxx, maxy = polygon.bounds
     while True:
-        x = random.uniform(minx, maxx)
-        y = random.uniform(miny, maxy)
-        p = Point(x, y)
+        p = Point(random.uniform(minx, maxx), random.uniform(miny, maxy))
         if polygon.contains(p):
             return p
 
@@ -136,11 +136,15 @@ if uploaded_zip:
             st.success("✅ Shapefile berhasil dimuat")
 
 nama_petak = st.text_input("Nama Petak", "Petak-1")
+
+# Form input kelas
+kelas_20_39 = input_kelas_diameter("20-39")
 kelas_40_49 = input_kelas_diameter("40-49")
 kelas_50_59 = input_kelas_diameter("50-59")
-kelas_60_90 = input_kelas_diameter("60-90")
+kelas_60_99 = input_kelas_diameter("60-99")
 kelas_100UP = input_kelas_diameter("100UP")
 
+# Tombol simulasi
 if st.button("🚀 Jalankan Simulasi"):
     if not polygon:
         st.error("⚠️ Silakan unggah shapefile petak terlebih dahulu.")
@@ -148,10 +152,9 @@ if st.button("🚀 Jalankan Simulasi"):
         st.info("Simulasi sedang berjalan...")
 
         data_semua = []
-        for kelas in [kelas_40_49, kelas_50_59, kelas_60_90, kelas_100UP]:
+        for kelas in [kelas_20_39, kelas_40_49, kelas_50_59, kelas_60_99, kelas_100UP]:
             data_semua.extend(simulasi_kelas(kelas, polygon))
 
-        # Acak dan tambahkan koordinat
         random.shuffle(data_semua)
         list_point = [random_point_in_polygon(polygon) for _ in data_semua]
         for i, pt in enumerate(list_point):
@@ -165,16 +168,13 @@ if st.button("🚀 Jalankan Simulasi"):
         min_x = polygon_utm.bounds.minx.values[0]
         gdf_pohon_utm = hitung_jalur_itsp(gdf_pohon_utm, min_x)
 
-        # Kembali ke WGS84
         gdf_final = gdf_pohon_utm.to_crs(epsg=4326)
         df_final = pd.DataFrame(gdf_final.drop(columns="geometry"))
 
-        # Rekap jenis & kelas
         rekap = df_final.groupby(["Jenis", "Kelas"]).agg(
             Jumlah=("Jenis", "count"), Volume=("Volume_m3", "sum")
         ).reset_index()
 
-        # Simpan ke Excel
         wb = Workbook()
         ws_data = wb.active
         ws_data.title = "DataPohon"
