@@ -33,9 +33,9 @@ if not st.session_state.logged_in:
     st.stop()
 
 # ------------------ BATAS WAKTU ------------------
-batas_tanggal = datetime.datetime(2025, 7, 16)
+batas_tanggal = datetime.datetime(2025, 11, 16)
 if datetime.datetime.now() > batas_tanggal:
-    st.error("⚠️ Akses aplikasi ini telah ditutup sejak 16 Juli 2025.")
+    st.error("⚠️ Hubungi tenyoms.")
     st.stop()
 
 # ------------------ KONSTANTA ------------------
@@ -190,3 +190,4 @@ if st.button("🚀 Jalankan Simulasi"):
 
         st.success(f"Hasil simulasi berhasil disimpan sebagai: {filename}")
         st.download_button("⬇️ Unduh Excel", open(filename, "rb"), file_name=filename)
+
