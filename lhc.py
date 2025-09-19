@@ -128,12 +128,25 @@ if uploaded_zip:
     with tempfile.TemporaryDirectory() as tmpdir:
         with zipfile.ZipFile(uploaded_zip, "r") as zip_ref:
             zip_ref.extractall(tmpdir)
-        shp_files = [f for f in os.listdir(tmpdir) if f.endswith(".shp")]
-        if shp_files:
-            gdf = gpd.read_file(os.path.join(tmpdir, shp_files[0]))
-            gdf = gdf.to_crs(epsg=4326)
-            polygon = gdf.geometry.iloc[0]
-            st.success("✅ Shapefile berhasil dimuat")
+
+        # Cari file .shp (case-insensitive) dengan path penuh
+        shp_path = None
+        for root, dirs, files in os.walk(tmpdir):
+            for f in files:
+                if f.lower().endswith(".shp"):
+                    shp_path = os.path.join(root, f)
+                    break
+
+        if shp_path:
+            try:
+                gdf = gpd.read_file(shp_path)
+                gdf = gdf.to_crs(epsg=4326)
+                polygon = gdf.geometry.iloc[0]
+                st.success("✅ Shapefile berhasil dimuat")
+            except Exception as e:
+                st.error(f"Gagal membaca shapefile: {e}")
+        else:
+            st.error("❌ File .shp tidak ditemukan dalam ZIP")
 
 nama_petak = st.text_input("Nama Petak", "Petak-1")
 
@@ -190,4 +203,3 @@ if st.button("🚀 Jalankan Simulasi"):
 
         st.success(f"Hasil simulasi berhasil disimpan sebagai: {filename}")
         st.download_button("⬇️ Unduh Excel", open(filename, "rb"), file_name=filename)
-
