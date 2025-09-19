@@ -129,7 +129,7 @@ if uploaded_zip:
         with zipfile.ZipFile(uploaded_zip, "r") as zip_ref:
             zip_ref.extractall(tmpdir)
 
-        # Cari file .shp (case-insensitive) dengan path penuh
+        # Cari file .shp (case-insensitive)
         shp_path = None
         for root, dirs, files in os.walk(tmpdir):
             for f in files:
@@ -139,7 +139,7 @@ if uploaded_zip:
 
         if shp_path:
             try:
-                gdf = gpd.read_file(shp_path)
+                gdf = gpd.read_file(shp_path, driver="ESRI Shapefile")
                 gdf = gdf.to_crs(epsg=4326)
                 polygon = gdf.geometry.iloc[0]
                 st.success("✅ Shapefile berhasil dimuat")
