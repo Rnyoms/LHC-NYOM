@@ -3,13 +3,15 @@ import pandas as pd
 import random
 import numpy as np
 import geopandas as gpd
-from shapely.geometry import Point
+from shapely.geometry import Point, Polygon, MultiPolygon
+from shapely.ops import unary_union
 import zipfile
 import os
 import tempfile
 from openpyxl import Workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
 import datetime
+import io
 
 # ------------------ SISTEM LOGIN ------------------
 AUTHORIZED_USERS = {"pbph": "pbph123"}
@@ -33,7 +35,7 @@ if not st.session_state.logged_in:
     st.stop()
 
 # ------------------ BATAS WAKTU ------------------
-batas_tanggal = datetime.datetime(2025, 11, 16)
+batas_tanggal = datetime.datetime(2025, 12, 31)
 if datetime.datetime.now() > batas_tanggal:
     st.error("⚠️ Hubungi tenyoms.")
     st.stop()
@@ -55,17 +57,18 @@ def input_kelas_diameter(kelas_nama):
 
     col1, col2 = st.columns(2)
     with col1:
-        target_volume = st.number_input(f"{kelas_nama} - Target Volume (m³)", min_value=0.0, value=5.0, step=0.1, format="%.1f")
+        target_volume = st.number_input(f"{kelas_nama} - Target Volume (m³)", min_value=0.0, value=5.0, step=0.1, format="%.1f", key=f"tv_{kelas_nama}")
     with col2:
-        toleransi = st.number_input(f"{kelas_nama} - Toleransi Volume (m³)", min_value=0.0, value=0.1, step=0.01, format="%.2f")
+        toleransi = st.number_input(f"{kelas_nama} - Toleransi Volume (m³)", min_value=0.0, value=0.1, step=0.01, format="%.2f", key=f"tol_{kelas_nama}")
 
-    estimasi_jumlah = int(target_volume // data_baku["rata2_volume"])
-    st.info(f"Perkiraan jumlah pohon: {estimasi_jumlah} pohon (rata-rata {data_baku['rata2_volume']} m³)")
+    rata = data_baku.get("rata2_volume", 1.0)
+    estimasi_jumlah = int(target_volume // rata) if rata > 0 else 0
+    st.info(f"Perkiraan jumlah pohon: {estimasi_jumlah} pohon (rata-rata {rata} m³)")
 
     st.markdown(f"**Persentase Jenis Pohon - {kelas_nama}**")
     jenis_dict = {}
     for jenis in JENIS_POHON:
-        persen = st.number_input(f"{jenis} (%)", min_value=0, max_value=100, value=0, step=1, key=f"{kelas_nama}_{jenis}")
+        persen = st.number_input(f"{kelas_nama} - {jenis} (%)", min_value=0, max_value=100, value=0, step=1, key=f"{kelas_nama}_{jenis}")
         jenis_dict[jenis] = persen
 
     return {
@@ -81,29 +84,42 @@ def pilih_jenis(persen_jenis):
     final = {j: p for j, p in persen_jenis.items() if p > 0}
     total = sum(final.values())
     if total == 0:
-        final = {j: 25 for j in JENIS_POHON}
-        total = 100
+        final = {j: 100/len(JENIS_POHON) for j in JENIS_POHON}
+        total = sum(final.values())
     probs = [v / total for v in final.values()]
     return list(final.keys()), probs
 
-def random_point_in_polygon(polygon):
+def random_point_in_polygon(polygon, max_attempt=5000):
+    """Mendapatkan titik acak dalam Polygon atau MultiPolygon. Return Point."""
+    if isinstance(polygon, MultiPolygon):
+        # pilih salah satu bagian secara acak (proporsional ke area bisa ditambahkan)
+        polygon = random.choice(list(polygon.geoms))
+
     minx, miny, maxx, maxy = polygon.bounds
-    while True:
+    for _ in range(max_attempt):
         p = Point(random.uniform(minx, maxx), random.uniform(miny, maxy))
         if polygon.contains(p):
             return p
+    # fallback ke centroid jika gagal
+    return polygon.centroid
 
 def simulasi_kelas(data_kelas, polygon):
     hasil = []
     jenis_list, probs = pilih_jenis(data_kelas["persen_jenis"])
-    total_volume = 0
+    total_volume = 0.0
     iterasi = 0
-    max_iter = 100000
-    while abs(total_volume - data_kelas["target_volume"]) > data_kelas["toleransi"] and iterasi < max_iter:
+    max_iter = 20000
+    target = data_kelas["target_volume"]
+    tol = data_kelas["toleransi"]
+
+    if target <= 0:
+        return hasil
+
+    while abs(total_volume - target) > tol and iterasi < max_iter:
         diameter = random.randint(int(data_kelas["d_min"]), int(data_kelas["d_max"]))
         tinggi = random.randint(int(data_kelas["h_min"]), int(data_kelas["h_max"]))
         volume = round(0.7854 * (diameter / 100)**2 * tinggi * 0.6, 2)
-        if total_volume + volume > data_kelas["target_volume"] + data_kelas["toleransi"]:
+        if total_volume + volume > target + tol:
             iterasi += 1
             continue
         jenis = np.random.choice(jenis_list, p=probs)
@@ -116,8 +132,9 @@ def simulasi_kelas(data_kelas, polygon):
     return hasil
 
 def hitung_jalur_itsp(gdf_pohon_utm, min_x):
-    gdf_pohon_utm["Jalur"] = ((gdf_pohon_utm.geometry.x - min_x) // 20).astype(int) + 1
-    return gdf_pohon_utm
+    gdf = gdf_pohon_utm.copy()
+    gdf["Jalur"] = ((gdf.geometry.x - min_x) // 20).astype(int) + 1
+    return gdf
 
 # ------------------ APLIKASI ------------------
 st.title("🌲 Simulasi LHC Bayangan + Jalur ITSP")
@@ -129,20 +146,34 @@ if uploaded_zip:
         with zipfile.ZipFile(uploaded_zip, "r") as zip_ref:
             zip_ref.extractall(tmpdir)
 
-        # Cari file .shp (case-insensitive)
+        # Cari file .shp (case-insensitive) dengan path penuh
         shp_path = None
         for root, dirs, files in os.walk(tmpdir):
             for f in files:
                 if f.lower().endswith(".shp"):
                     shp_path = os.path.join(root, f)
                     break
+            if shp_path:
+                break
 
         if shp_path:
             try:
-                gdf = gpd.read_file(shp_path, driver="ESRI Shapefile")
-                gdf = gdf.to_crs(epsg=4326)
-                polygon = gdf.geometry.iloc[0]
-                st.success("✅ Shapefile berhasil dimuat")
+                gdf = gpd.read_file(shp_path)
+                # Pastikan CRS; jika tidak ada, anggap EPSG:4326 (harap verifikasi manual)
+                if gdf.crs is None:
+                    st.warning("CRS shapefile tidak ditemukan — diasumsikan EPSG:4326.")
+                    gdf.set_crs(epsg=4326, inplace=True)
+                else:
+                    # normalisasi ke 4326 agar titik acak didapat dalam lat/lon
+                    gdf = gdf.to_crs(epsg=4326)
+
+                # gabungkan semua fitur jadi satu (Polygon atau MultiPolygon)
+                geom_union = unary_union(gdf.geometry.values)
+                if not isinstance(geom_union, (Polygon, MultiPolygon)):
+                    st.error("Geometri shapefile bukan Polygon/MultiPolygon.")
+                else:
+                    polygon = geom_union
+                    st.success("✅ Shapefile berhasil dimuat dan digabung.")
             except Exception as e:
                 st.error(f"Gagal membaca shapefile: {e}")
         else:
@@ -157,37 +188,67 @@ kelas_50_59 = input_kelas_diameter("50-59")
 kelas_60_99 = input_kelas_diameter("60-99")
 kelas_100UP = input_kelas_diameter("100UP")
 
-# Tombol simulasi
+# ------------------ TOMBOL SIMULASI ------------------
 if st.button("🚀 Jalankan Simulasi"):
     if not polygon:
         st.error("⚠️ Silakan unggah shapefile petak terlebih dahulu.")
     else:
         st.info("Simulasi sedang berjalan...")
 
+        # 1) Simulasi berdasarkan kelas
         data_semua = []
         for kelas in [kelas_20_39, kelas_40_49, kelas_50_59, kelas_60_99, kelas_100UP]:
             data_semua.extend(simulasi_kelas(kelas, polygon))
 
+        if len(data_semua) == 0:
+            st.warning("Tidak ada data pohon yang dihasilkan. Periksa target volume/toleransi.")
+            st.stop()
+
+        # 2) Tempatkan titik acak di dalam polygon (mendukung MultiPolygon)
         random.shuffle(data_semua)
-        list_point = [random_point_in_polygon(polygon) for _ in data_semua]
-        for i, pt in enumerate(list_point):
+        points = [random_point_in_polygon(polygon) for _ in data_semua]
+        for i, pt in enumerate(points):
             data_semua[i]["Latitude"] = pt.y
             data_semua[i]["Longitude"] = pt.x
 
+        # 3) Buat GeoDataFrame (EPSG:4326)
         df_pohon = pd.DataFrame(data_semua)
         gdf_pohon = gpd.GeoDataFrame(df_pohon, geometry=gpd.points_from_xy(df_pohon["Longitude"], df_pohon["Latitude"]), crs="EPSG:4326")
-        gdf_pohon_utm = gdf_pohon.to_crs(epsg=32753)
-        polygon_utm = gpd.GeoSeries([polygon], crs="EPSG:4326").to_crs(epsg=32753)
-        min_x = polygon_utm.bounds.minx.values[0]
+
+        # 4) Konversi ke UTM zona 53S (Papua Barat)
+        epsg_utm = 32753
+        try:
+            gdf_pohon_utm = gdf_pohon.to_crs(epsg=epsg_utm)
+        except Exception as e:
+            st.error(f"Gagal konversi ke EPSG:{epsg_utm} — {e}")
+            st.stop()
+
+        # 5) Konversi polygon ke UTM untuk hitung min_x
+        try:
+            polygon_utm = gpd.GeoSeries([polygon], crs="EPSG:4326").to_crs(epsg=epsg_utm)
+            min_x = polygon_utm.bounds.minx.values[0]
+        except Exception as e:
+            st.warning(f"Gagal konversi polygon ke UTM: {e}. Menggunakan min x dari titik pohon.")
+            min_x = gdf_pohon_utm.geometry.x.min()
+
+        # 6) Hitung jalur ITSP (menggunakan kolom geometry UTM)
         gdf_pohon_utm = hitung_jalur_itsp(gdf_pohon_utm, min_x)
 
-        gdf_final = gdf_pohon_utm.to_crs(epsg=4326)
+        # 7) Kembalikan ke EPSG:4326 untuk output & rekap
+        try:
+            gdf_final = gdf_pohon_utm.to_crs(epsg=4326)
+        except Exception:
+            gdf_final = gdf_pohon_utm  # jika gagal, tetap gunakan data UTM
+
         df_final = pd.DataFrame(gdf_final.drop(columns="geometry"))
 
+        # 8) Rekap
         rekap = df_final.groupby(["Jenis", "Kelas"]).agg(
             Jumlah=("Jenis", "count"), Volume=("Volume_m3", "sum")
         ).reset_index()
 
+        # 9) Simpan ke excel di memori dan tawarkan unduh (tidak menyimpan permanen)
+        buffer = io.BytesIO()
         wb = Workbook()
         ws_data = wb.active
         ws_data.title = "DataPohon"
@@ -198,8 +259,9 @@ if st.button("🚀 Jalankan Simulasi"):
         for r in dataframe_to_rows(rekap, index=False, header=True):
             ws_rekap.append(r)
 
-        filename = f"{nama_petak}.xlsx"
-        wb.save(filename)
+        wb.save(buffer)
+        buffer.seek(0)
 
-        st.success(f"Hasil simulasi berhasil disimpan sebagai: {filename}")
-        st.download_button("⬇️ Unduh Excel", open(filename, "rb"), file_name=filename)
+        st.success("Hasil simulasi siap diunduh.")
+        st.dataframe(rekap)
+        st.download_button("⬇️ Unduh Excel", data=buffer, file_name=f"{nama_petak}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
