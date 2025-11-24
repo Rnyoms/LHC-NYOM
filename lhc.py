@@ -43,8 +43,8 @@ if datetime.datetime.now() > batas_tanggal:
 # ------------------ KONSTANTA ------------------
 JENIS_POHON = ["Merbau", "Kelompok Meranti", "Rimba Campuran", "Kayu Indah"]
 KETENTUAN_BAKU = {
-    "20-39": {"d_min": 20, "d_max": 39, "h_min": 9, "h_max": 12, "rata2_volume": 0.45},
-    "40-49": {"d_min": 40, "d_max": 49, "h_min": 11, "h_max": 15, "rata2_volume": 1.38},
+    "20-29": {"d_min": 20, "d_max": 29, "h_min": 9, "h_max": 12, "rata2_volume": 0.45},
+    "30-39": {"d_min": 30, "d_max": 39, "h_min": 9, "h_max": 13, "rata2_volume": 1.38},
     "50-59": {"d_min": 50, "d_max": 59, "h_min": 12, "h_max": 17, "rata2_volume": 2.05},
     "60-99": {"d_min": 60, "d_max": 99, "h_min": 13, "h_max": 19, "rata2_volume": 3.00},
     "100UP": {"d_min": 100, "d_max": 200, "h_min": 17, "h_max": 23, "rata2_volume": 9.65}
@@ -108,7 +108,7 @@ def simulasi_kelas(data_kelas, polygon):
     jenis_list, probs = pilih_jenis(data_kelas["persen_jenis"])
     total_volume = 0.0
     iterasi = 0
-    max_iter = 20000
+    max_iter = 100000
     target = data_kelas["target_volume"]
     tol = data_kelas["toleransi"]
 
@@ -265,3 +265,4 @@ if st.button("🚀 Jalankan Simulasi"):
         st.success("Hasil simulasi siap diunduh.")
         st.dataframe(rekap)
         st.download_button("⬇️ Unduh Excel", data=buffer, file_name=f"{nama_petak}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
